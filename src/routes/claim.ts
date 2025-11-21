@@ -38,19 +38,33 @@ claimRouter.post('/generate', async (req, res, next) => {
     const existingClaim = await getClaim(nftId);
     
     if (existingClaim) {
-      // Check if already claimed
-      if (existingClaim.claimed) {
-        return res.status(409).json({ 
-          error: 'NFT has already been claimed on-chain',
-          nftId,
-          claimedAt: existingClaim.claimed_at
-        });
-      }
-      
       // Generate new signature for update
       const { signature, publicKey } = generateClaimProof(nftId, walletAddress);
       
-      // Update existing unclaimed claim
+      if (existingClaim.claimed) {
+        // NFT already claimed - only update metadata, not wallet/signature
+        const claim = await updateClaim(nftId, existingClaim.wallet_address, existingClaim.signature, metadataString);
+        
+        if (!claim) {
+          return res.status(500).json({ 
+            error: 'Failed to update metadata',
+            nftId
+          });
+        }
+        
+        return res.json({
+          nftId,
+          walletAddress: existingClaim.wallet_address,
+          signature: existingClaim.signature,
+          signerPublicKey: publicKey,
+          claimId: claim.id,
+          message: 'Metadata updated successfully (NFT already claimed)',
+          updated: true,
+          claimed: true
+        });
+      }
+      
+      // Update existing unclaimed claim - allow wallet and signature change
       const claim = await updateClaim(nftId, walletAddress, signature, metadataString);
       
       if (!claim) {
@@ -67,7 +81,8 @@ claimRouter.post('/generate', async (req, res, next) => {
         signerPublicKey: publicKey,
         claimId: claim.id,
         message: 'Claim proof updated successfully',
-        updated: true
+        updated: true,
+        claimed: false
       });
     }
     
@@ -91,7 +106,8 @@ claimRouter.post('/generate', async (req, res, next) => {
       signerPublicKey: publicKey,
       claimId: claim.id,
       message: 'Claim proof generated successfully',
-      updated: false
+      updated: false,
+      claimed: false
     });
     
   } catch (err) {

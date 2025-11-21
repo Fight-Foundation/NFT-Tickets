@@ -195,12 +195,12 @@ export async function updateClaim(nftId: number, walletAddress: string, signatur
   
   if (db.type === 'sqlite') {
     const stmt = db.db.prepare(
-      'UPDATE claims SET wallet_address = ?, signature = ?, metadata = ? WHERE nft_id = ? AND claimed = FALSE RETURNING *'
+      'UPDATE claims SET wallet_address = ?, signature = ?, metadata = ? WHERE nft_id = ? RETURNING *'
     );
     return stmt.get(walletAddress, signature, metadata || null, nftId);
   } else {
     const result = await db.pool.query(
-      'UPDATE claims SET wallet_address = $1, signature = $2, metadata = $3 WHERE nft_id = $4 AND claimed = FALSE RETURNING *',
+      'UPDATE claims SET wallet_address = $1, signature = $2, metadata = $3 WHERE nft_id = $4 RETURNING *',
       [walletAddress, signature, metadata || null, nftId]
     );
     return result.rows[0];
