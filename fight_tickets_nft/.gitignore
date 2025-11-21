@@ -1,0 +1,39 @@
+# Anchor
+.anchor
+target/
+test-ledger/
+
+# Node
+node_modules/
+.yarn/
+dist/
+*.log
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+*.so
+*.keypair
+!program-keypairs/
+
+# Rust
+Cargo.lock
+**/*.rs.bk
+
+# Git Secret
+.gitsecret/keys/random_seed
+!*.secret
