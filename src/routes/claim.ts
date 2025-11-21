@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { PublicKey } from '@solana/web3.js';
 import * as nacl from 'tweetnacl';
 import bs58 from 'bs58';
-import { createUser, getUser, createClaim, getUserClaims } from '../db/index.js';
+import { createUser, getUser, createClaim, getClaim, updateClaim, getUserClaims } from '../db/index.js';
 import { generateClaimProof } from '../utils/signature.js';
 
 export const claimRouter = Router();
@@ -34,6 +34,44 @@ claimRouter.post('/generate', async (req, res, next) => {
     }
     const metadataString = JSON.stringify(metadata);
     
+    // Check if claim already exists
+    const existingClaim = await getClaim(nftId);
+    
+    if (existingClaim) {
+      // Check if already claimed
+      if (existingClaim.claimed) {
+        return res.status(409).json({ 
+          error: 'NFT has already been claimed on-chain',
+          nftId,
+          claimedAt: existingClaim.claimed_at
+        });
+      }
+      
+      // Generate new signature for update
+      const { signature, publicKey } = generateClaimProof(nftId, walletAddress);
+      
+      // Update existing unclaimed claim
+      const claim = await updateClaim(nftId, walletAddress, signature, metadataString);
+      
+      if (!claim) {
+        return res.status(409).json({ 
+          error: 'Failed to update claim - it may have been claimed',
+          nftId
+        });
+      }
+      
+      return res.json({
+        nftId,
+        walletAddress,
+        signature,
+        signerPublicKey: publicKey,
+        claimId: claim.id,
+        message: 'Claim proof updated successfully',
+        updated: true
+      });
+    }
+    
+    // Create new claim
     // Get or create user
     let user = await getUser(walletAddress);
     if (!user) {
@@ -52,7 +90,8 @@ claimRouter.post('/generate', async (req, res, next) => {
       signature,
       signerPublicKey: publicKey,
       claimId: claim.id,
-      message: 'Claim proof generated successfully'
+      message: 'Claim proof generated successfully',
+      updated: false
     });
     
   } catch (err) {

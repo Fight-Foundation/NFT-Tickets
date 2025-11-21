@@ -189,3 +189,20 @@ export async function getUserClaims(walletAddress: string) {
     return result.rows;
   }
 }
+
+export async function updateClaim(nftId: number, walletAddress: string, signature: string, metadata?: string) {
+  const db = getDb();
+  
+  if (db.type === 'sqlite') {
+    const stmt = db.db.prepare(
+      'UPDATE claims SET wallet_address = ?, signature = ?, metadata = ? WHERE nft_id = ? AND claimed = FALSE RETURNING *'
+    );
+    return stmt.get(walletAddress, signature, metadata || null, nftId);
+  } else {
+    const result = await db.pool.query(
+      'UPDATE claims SET wallet_address = $1, signature = $2, metadata = $3 WHERE nft_id = $4 AND claimed = FALSE RETURNING *',
+      [walletAddress, signature, metadata || null, nftId]
+    );
+    return result.rows[0];
+  }
+}
