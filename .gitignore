@@ -9,6 +9,12 @@ node_modules/
 dist/
 *.log
 
+# Data
+data/
+*.db
+*.db-shm
+*.db-wal
+
 # Environment
 .env
 .env.local
@@ -37,3 +43,4 @@ Cargo.lock
 # Git Secret
 .gitsecret/keys/random_seed
 !*.secret
+.env.test

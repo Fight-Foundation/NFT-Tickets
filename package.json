@@ -1,0 +1,52 @@
+{
+  "name": "fight-ticket-api",
+  "version": "1.0.0",
+  "description": "API server for Fight Tickets NFT claim system",
+  "main": "dist/index.js",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Fight-Foundation/NFT-Tickets.git"
+  },
+  "keywords": [
+    "solana",
+    "nft",
+    "api",
+    "tickets"
+  ],
+  "author": "Fight Foundation",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/Fight-Foundation/NFT-Tickets/issues"
+  },
+  "homepage": "https://github.com/Fight-Foundation/NFT-Tickets#readme",
+  "dependencies": {
+    "@solana/web3.js": "^1.98.4",
+    "better-sqlite3": "^12.4.1",
+    "bs58": "^6.0.0",
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.3",
+    "express": "^5.1.0",
+    "pg": "^8.16.3",
+    "tweetnacl": "^1.0.3"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.5",
+    "@types/node": "^24.10.1",
+    "@types/pg": "^8.15.6",
+    "@types/supertest": "^6.0.3",
+    "supertest": "^7.1.4",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.12"
+  }
+}
