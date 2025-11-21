@@ -15,7 +15,13 @@ const PORT = process.env.PORT || 3000;
 
 // Middleware
 app.use(cors());
-app.use(express.json());
+// Capture raw body for webhook signature verification before JSON parsing
+app.use(express.json({
+  verify: (req, _res, buf) => {
+    // @ts-ignore attach rawBody for HMAC verification in webhook route
+    req.rawBody = buf;
+  }
+}));
 
 // Initialize database
 initDatabase();

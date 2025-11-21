@@ -82,7 +82,11 @@ export function initDatabase() {
   }
 }
 
-export function getDb() {
+export type DbConnection = 
+  | { type: 'sqlite'; db: Database.Database }
+  | { type: 'postgres'; pool: pg.Pool };
+
+export function getDb(): DbConnection {
   if (isDev) {
     if (!sqliteDb) throw new Error('SQLite database not initialized');
     return { type: 'sqlite' as const, db: sqliteDb };

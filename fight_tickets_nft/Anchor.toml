@@ -1,5 +1,8 @@
 [toolchain]
 package_manager = "yarn"
+# Note: Using anchor-lang 0.30.1 in program for compatibility with mpl-token-metadata v4
+# IDL generation has known issues with anchor-syn 0.30.1, use `cargo build-sbf` directly
+anchor_version = "0.30.1"
 
 [features]
 resolution = true
@@ -8,11 +11,14 @@ skip-lint = false
 [programs.localnet]
 fight_tickets_nft = "6mfzKkngeptJoiVH7oYdSPSxnNpt3dBs94CMNkfw5oyG"
 
+[programs.devnet]
+fight_tickets_nft = "6mfzKkngeptJoiVH7oYdSPSxnNpt3dBs94CMNkfw5oyG"
+
 [registry]
 url = "https://api.apr.dev"
 
 [provider]
-cluster = "localnet"
+cluster = "devnet"
 wallet = "~/.config/solana/id.json"
 
 [scripts]

@@ -9,9 +9,19 @@ import {
   LAMPORTS_PER_SOL,
   TransactionInstruction,
   SYSVAR_INSTRUCTIONS_PUBKEY,
+  SYSVAR_RENT_PUBKEY,
 } from "@solana/web3.js";
+import {
+  TOKEN_PROGRAM_ID,
+  ASSOCIATED_TOKEN_PROGRAM_ID,
+  getAssociatedTokenAddressSync,
+  createAssociatedTokenAccountInstruction,
+} from "@solana/spl-token";
 import * as crypto from "crypto";
 import * as nacl from "tweetnacl";
+
+// Metaplex Token Metadata Program ID
+const TOKEN_METADATA_PROGRAM_ID = new PublicKey("metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s");
 
 describe("fight_tickets_nft", () => {
   const provider = anchor.AnchorProvider.env();
@@ -19,7 +29,9 @@ describe("fight_tickets_nft", () => {
 
   const program = anchor.workspace.FightTicketsNft as Program<FightTicketsNft>;
   
-  const BASE_URI = "https://ticketsnft.fight.foundation";
+  const BASE_URI = "https://ticketsnft.fight.foundation/";
+  const COLLECTION_NAME = "Fight Tickets";
+  const COLLECTION_SYMBOL = "FIGHT";
   
   // Test accounts
   let collection: Keypair;
@@ -27,6 +39,67 @@ describe("fight_tickets_nft", () => {
   let apiSigner: Keypair; // API's keypair for signing proofs (separate from operator)
   let recipient1: Keypair;
   let recipient2: Keypair;
+  let collectionMint: Keypair;
+  let collectionTokenAccount: PublicKey;
+
+  // Helper function to get Metaplex metadata PDA
+  function getMetadataPDA(mint: PublicKey): PublicKey {
+    const [metadata] = PublicKey.findProgramAddressSync(
+      [
+        Buffer.from("metadata"),
+        TOKEN_METADATA_PROGRAM_ID.toBuffer(),
+        mint.toBuffer(),
+      ],
+      TOKEN_METADATA_PROGRAM_ID
+    );
+    return metadata;
+  }
+
+  // Helper function to get Metaplex master edition PDA
+  function getMasterEditionPDA(mint: PublicKey): PublicKey {
+    const [edition] = PublicKey.findProgramAddressSync(
+      [
+        Buffer.from("metadata"),
+        TOKEN_METADATA_PROGRAM_ID.toBuffer(),
+        mint.toBuffer(),
+        Buffer.from("edition"),
+      ],
+      TOKEN_METADATA_PROGRAM_ID
+    );
+    return edition;
+  }
+
+  // Helper function to initialize collection with Metaplex
+  async function initializeCollection() {
+    collectionMint = Keypair.generate();
+    const collectionMetadata = getMetadataPDA(collectionMint.publicKey);
+    const collectionMasterEdition = getMasterEditionPDA(collectionMint.publicKey);
+    collectionTokenAccount = getAssociatedTokenAddressSync(
+      collectionMint.publicKey,
+      operator.publicKey,
+      false,
+      TOKEN_PROGRAM_ID
+    );
+
+    return await program.methods
+      .initialize(apiSigner.publicKey, BASE_URI, COLLECTION_NAME, COLLECTION_SYMBOL)
+      .accounts({
+        collection: collection.publicKey,
+        collectionMint: collectionMint.publicKey,
+        collectionTokenAccount,
+        collectionMetadata,
+        collectionMasterEdition,
+        authority: operator.publicKey,
+        systemProgram: SystemProgram.programId,
+        tokenProgram: TOKEN_PROGRAM_ID,
+        associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+        rent: SYSVAR_RENT_PUBKEY,
+        tokenMetadataProgram: TOKEN_METADATA_PROGRAM_ID,
+        sysvarInstructions: SYSVAR_INSTRUCTIONS_PUBKEY,
+      })
+      .signers([collection, operator, collectionMint])
+      .rpc();
+  }
 
   beforeEach(async () => {
     collection = Keypair.generate();
@@ -124,6 +197,15 @@ describe("fight_tickets_nft", () => {
   ) {
     const proof = createProof(nftId, recipient.publicKey, signerKeypair);
     const [nftPda] = getNftPda(collectionPubkey, nftId);
+    const nftMint = Keypair.generate();
+    const nftMetadata = getMetadataPDA(nftMint.publicKey);
+    const nftMasterEdition = getMasterEditionPDA(nftMint.publicKey);
+    const nftTokenAccount = getAssociatedTokenAddressSync(
+      nftMint.publicKey,
+      recipient.publicKey,
+      false,
+      TOKEN_PROGRAM_ID
+    );
 
     // Create the message hash that was signed
     const message = Buffer.concat([
@@ -136,29 +218,64 @@ describe("fight_tickets_nft", () => {
     const ed25519Ix = createEd25519Instruction(proof, signerKeypair.publicKey, messageHash);
 
     return await program.methods
-      .claim(Array.from(proof), nftId, recipient.publicKey)
+      .claim(
+        Array.from(proof),
+        nftId,
+        recipient.publicKey,
+        `Fight Ticket #${nftId}`,
+        `${BASE_URI}${nftId}.json`
+      )
       .accounts({
         collection: collectionPubkey,
         nft: nftPda,
+        nftMint: nftMint.publicKey,
+        nftTokenAccount,
+        nftMetadata,
+        nftMasterEdition,
+        recipientAccount: recipient.publicKey,
         payer: recipient.publicKey,
         instructionSysvar: SYSVAR_INSTRUCTIONS_PUBKEY,
         systemProgram: SystemProgram.programId,
+        tokenProgram: TOKEN_PROGRAM_ID,
+        associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+        rent: SYSVAR_RENT_PUBKEY,
+        tokenMetadataProgram: TOKEN_METADATA_PROGRAM_ID,
+        sysvarInstructions: SYSVAR_INSTRUCTIONS_PUBKEY,
       })
       .preInstructions([ed25519Ix])
-      .signers([recipient])
+      .signers([recipient, nftMint])
       .rpc();
   }
 
   describe("Initialization", () => {
     it("Initializes the NFT collection with correct parameters", async () => {
+      const collectionMint = Keypair.generate();
+      const collectionMetadata = getMetadataPDA(collectionMint.publicKey);
+      const collectionMasterEdition = getMasterEditionPDA(collectionMint.publicKey);
+      const collectionTokenAccount = getAssociatedTokenAddressSync(
+        collectionMint.publicKey,
+        operator.publicKey,
+        false,
+        TOKEN_PROGRAM_ID
+      );
+
       const tx = await program.methods
-        .initialize(apiSigner.publicKey, BASE_URI)
+        .initialize(apiSigner.publicKey, BASE_URI, COLLECTION_NAME, COLLECTION_SYMBOL)
         .accounts({
           collection: collection.publicKey,
+          collectionMint: collectionMint.publicKey,
+          collectionTokenAccount,
+          collectionMetadata,
+          collectionMasterEdition,
           authority: operator.publicKey,
           systemProgram: SystemProgram.programId,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+          rent: SYSVAR_RENT_PUBKEY,
+          tokenMetadataProgram: TOKEN_METADATA_PROGRAM_ID,
+          sysvarInstructions: SYSVAR_INSTRUCTIONS_PUBKEY,
         })
-        .signers([collection, operator])
+        .signers([collection, operator, collectionMint])
         .rpc();
 
       console.log("Initialize transaction signature:", tx);
@@ -171,24 +288,41 @@ describe("fight_tickets_nft", () => {
       assert.equal(collectionAccount.isLocked, false);
       assert.equal(collectionAccount.totalSupply, 0);
       assert.equal(collectionAccount.baseUri, BASE_URI);
+      assert.equal(collectionAccount.collectionMint.toBase58(), collectionMint.publicKey.toBase58());
     });
 
     it("Initializes with separate API signer different from operator", async () => {
       const separateApiSigner = Keypair.generate();
+      const collectionMint = Keypair.generate();
+      const collectionMetadata = getMetadataPDA(collectionMint.publicKey);
+      const collectionMasterEdition = getMasterEditionPDA(collectionMint.publicKey);
+      const collectionTokenAccount = getAssociatedTokenAddressSync(
+        collectionMint.publicKey,
+        operator.publicKey,
+        false,
+        TOKEN_PROGRAM_ID
+      );
       
       const tx = await program.methods
-        .initialize(separateApiSigner.publicKey, BASE_URI)
+        .initialize(separateApiSigner.publicKey, BASE_URI, COLLECTION_NAME, COLLECTION_SYMBOL)
         .accounts({
           collection: collection.publicKey,
+          collectionMint: collectionMint.publicKey,
+          collectionTokenAccount,
+          collectionMetadata,
+          collectionMasterEdition,
           authority: operator.publicKey,
           systemProgram: SystemProgram.programId,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+          rent: SYSVAR_RENT_PUBKEY,
+          tokenMetadataProgram: TOKEN_METADATA_PROGRAM_ID,
+          sysvarInstructions: SYSVAR_INSTRUCTIONS_PUBKEY,
         })
-        .signers([collection, operator])
+        .signers([collection, operator, collectionMint])
         .rpc();
-
-      const collectionAccount = await program.account.nftCollection.fetch(collection.publicKey);
       
-      // Verify operator and signer are different
+      const collectionAccount = await program.account.nftCollection.fetch(collection.publicKey);      // Verify operator and signer are different
       assert.notEqual(collectionAccount.authority.toBase58(), collectionAccount.signer.toBase58());
       assert.equal(collectionAccount.authority.toBase58(), operator.publicKey.toBase58());
       assert.equal(collectionAccount.signer.toBase58(), separateApiSigner.publicKey.toBase58());
@@ -199,15 +333,40 @@ describe("fight_tickets_nft", () => {
       await provider.connection.requestAirdrop(unauthorized.publicKey, LAMPORTS_PER_SOL);
       await new Promise(resolve => setTimeout(resolve, 1000));
 
+      const collectionMint = Keypair.generate();
+      const collectionMetadata = getMetadataPDA(collectionMint.publicKey);
+      const collectionMasterEdition = getMasterEditionPDA(collectionMint.publicKey);
+      const collectionTokenAccount = getAssociatedTokenAddressSync(
+        collectionMint.publicKey,
+        operator.publicKey
+      );
+
+      const createAtaIx = createAssociatedTokenAccountInstruction(
+        operator.publicKey,
+        collectionTokenAccount,
+        operator.publicKey,
+        collectionMint.publicKey
+      );
+
       try {
         await program.methods
-          .initialize(apiSigner.publicKey, BASE_URI)
+          .initialize(apiSigner.publicKey, BASE_URI, COLLECTION_NAME, COLLECTION_SYMBOL)
           .accounts({
             collection: collection.publicKey,
+            collectionMint: collectionMint.publicKey,
+            collectionTokenAccount,
+            collectionMetadata,
+            collectionMasterEdition,
             authority: operator.publicKey,
             systemProgram: SystemProgram.programId,
+            tokenProgram: TOKEN_PROGRAM_ID,
+            associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+            rent: SYSVAR_RENT_PUBKEY,
+            tokenMetadataProgram: TOKEN_METADATA_PROGRAM_ID,
+            sysvarInstructions: SYSVAR_INSTRUCTIONS_PUBKEY,
           })
-          .signers([collection, unauthorized])
+          .preInstructions([createAtaIx])
+          .signers([collection, unauthorized, collectionMint])
           .rpc();
         
         assert.fail("Should have failed with unauthorized signer");
@@ -221,15 +380,7 @@ describe("fight_tickets_nft", () => {
   describe("Claim NFT", () => {
     beforeEach(async () => {
       // Initialize collection before each claim test
-      await program.methods
-        .initialize(apiSigner.publicKey, BASE_URI)
-        .accounts({
-          collection: collection.publicKey,
-          authority: operator.publicKey,
-          systemProgram: SystemProgram.programId,
-        })
-        .signers([collection, operator])
-        .rpc();
+      await initializeCollection();
     });
 
     it("Successfully claims an NFT with valid proof from API signer", async () => {
@@ -322,15 +473,7 @@ describe("fight_tickets_nft", () => {
 
     beforeEach(async () => {
       // Initialize and claim an NFT
-      await program.methods
-        .initialize(apiSigner.publicKey, BASE_URI)
-        .accounts({
-          collection: collection.publicKey,
-          authority: operator.publicKey,
-          systemProgram: SystemProgram.programId,
-        })
-        .signers([collection, operator])
-        .rpc();
+      await initializeCollection();
 
       nftId = 100;
       [nftPda] = getNftPda(collection.publicKey, nftId);
@@ -383,15 +526,7 @@ describe("fight_tickets_nft", () => {
 
     beforeEach(async () => {
       // Initialize and claim an NFT
-      await program.methods
-        .initialize(apiSigner.publicKey, BASE_URI)
-        .accounts({
-          collection: collection.publicKey,
-          authority: operator.publicKey,
-          systemProgram: SystemProgram.programId,
-        })
-        .signers([collection, operator])
-        .rpc();
+      await initializeCollection();
 
       nftId = 200;
       [nftPda] = getNftPda(collection.publicKey, nftId);
@@ -449,15 +584,7 @@ describe("fight_tickets_nft", () => {
   describe("Lock Mechanism", () => {
     beforeEach(async () => {
       // Initialize collection
-      await program.methods
-        .initialize(apiSigner.publicKey, BASE_URI)
-        .accounts({
-          collection: collection.publicKey,
-          authority: operator.publicKey,
-          systemProgram: SystemProgram.programId,
-        })
-        .signers([collection, operator])
-        .rpc();
+      await initializeCollection();
     });
 
     it("Allows operator to lock the contract", async () => {
@@ -588,15 +715,7 @@ describe("fight_tickets_nft", () => {
 
     beforeEach(async () => {
       // Initialize collection
-      await program.methods
-        .initialize(apiSigner.publicKey, BASE_URI)
-        .accounts({
-          collection: collection.publicKey,
-          authority: operator.publicKey,
-          systemProgram: SystemProgram.programId,
-        })
-        .signers([collection, operator])
-        .rpc();
+      await initializeCollection();
 
       newSigner = Keypair.generate();
     });
@@ -728,15 +847,7 @@ describe("fight_tickets_nft", () => {
 
     beforeEach(async () => {
       // Initialize collection
-      await program.methods
-        .initialize(apiSigner.publicKey, BASE_URI)
-        .accounts({
-          collection: collection.publicKey,
-          authority: operator.publicKey,
-          systemProgram: SystemProgram.programId,
-        })
-        .signers([collection, operator])
-        .rpc();
+      await initializeCollection();
     });
 
     it("Allows operator to update base URI", async () => {

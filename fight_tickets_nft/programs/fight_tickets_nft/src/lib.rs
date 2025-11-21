@@ -1,8 +1,20 @@
 use anchor_lang::prelude::*;
-use solana_program::{
+use anchor_lang::solana_program::{
     ed25519_program,
     hash::hashv,
-    sysvar::instructions::{load_instruction_at_checked, ID as SYSVAR_INSTRUCTIONS_ID},
+    sysvar::instructions::load_instruction_at_checked,
+};
+use anchor_spl::{
+    associated_token::AssociatedToken,
+    token::{Mint, Token, mint_to, MintTo},
+};
+use mpl_token_metadata::{
+    ID as TOKEN_METADATA_ID,
+    instructions::{
+        CreateMasterEditionV3Cpi, CreateMasterEditionV3CpiAccounts, CreateMasterEditionV3InstructionArgs,
+        CreateMetadataAccountV3Cpi, CreateMetadataAccountV3CpiAccounts, CreateMetadataAccountV3InstructionArgs,
+    },
+    types::{Creator, Collection, CollectionDetails},
 };
 
 declare_id!("6mfzKkngeptJoiVH7oYdSPSxnNpt3dBs94CMNkfw5oyG");
@@ -13,30 +25,115 @@ const MAX_SUPPLY: u32 = 10000;
 pub mod fight_tickets_nft {
     use super::*;
 
-    /// Initialize the NFT collection
-    pub fn initialize(ctx: Context<Initialize>, signer: Pubkey, base_uri: String) -> Result<()> {
+    /// Initialize the NFT collection with Metaplex metadata
+    pub fn initialize(ctx: Context<Initialize>, signer: Pubkey, base_uri: String, collection_name: String, collection_symbol: String) -> Result<()> {
         let collection = &mut ctx.accounts.collection;
         collection.authority = ctx.accounts.authority.key();
         collection.signer = signer;
         collection.is_locked = false;
         collection.total_supply = 0;
-        collection.base_uri = base_uri;
+        collection.base_uri = base_uri.clone();
+        collection.collection_mint = ctx.accounts.collection_mint.key();
+        
+        // Create associated token account for collection
+        let create_ata_accounts = anchor_spl::associated_token::Create {
+            payer: ctx.accounts.authority.to_account_info(),
+            associated_token: ctx.accounts.collection_token_account.to_account_info(),
+            authority: ctx.accounts.authority.to_account_info(),
+            mint: ctx.accounts.collection_mint.to_account_info(),
+            system_program: ctx.accounts.system_program.to_account_info(),
+            token_program: ctx.accounts.token_program.to_account_info(),
+        };
+        let create_ata_ctx = CpiContext::new(
+            ctx.accounts.associated_token_program.to_account_info(),
+            create_ata_accounts,
+        );
+        anchor_spl::associated_token::create(create_ata_ctx)?;
+        
+        // Mint one token for the collection NFT
+        mint_to(
+            CpiContext::new(
+                ctx.accounts.token_program.to_account_info(),
+                MintTo {
+                    mint: ctx.accounts.collection_mint.to_account_info(),
+                    to: ctx.accounts.collection_token_account.to_account_info(),
+                    authority: ctx.accounts.authority.to_account_info(),
+                },
+            ),
+            1,
+        )?;
+        
+        // Create Metaplex metadata for collection
+        let creators = vec![
+            Creator {
+                address: ctx.accounts.authority.key(),
+                verified: true,
+                share: 100,
+            },
+        ];
+        
+        CreateMetadataAccountV3Cpi::new(
+            &ctx.accounts.token_metadata_program.to_account_info(),
+            CreateMetadataAccountV3CpiAccounts {
+                metadata: &ctx.accounts.collection_metadata.to_account_info(),
+                mint: &ctx.accounts.collection_mint.to_account_info(),
+                mint_authority: &ctx.accounts.authority.to_account_info(),
+                payer: &ctx.accounts.authority.to_account_info(),
+                update_authority: (&ctx.accounts.authority.to_account_info(), true),
+                system_program: &ctx.accounts.system_program.to_account_info(),
+                rent: Some(&ctx.accounts.rent.to_account_info()),
+            },
+            CreateMetadataAccountV3InstructionArgs {
+                data: mpl_token_metadata::types::DataV2 {
+                    name: collection_name,
+                    symbol: collection_symbol,
+                    uri: format!("{}collection.json", base_uri),
+                    seller_fee_basis_points: 0,
+                    creators: Some(creators),
+                    collection: None,
+                    uses: None,
+                },
+                is_mutable: true,
+                collection_details: Some(CollectionDetails::V1 { size: 0 }),
+            },
+        )
+        .invoke()?;
+        
+        // Create master edition
+        CreateMasterEditionV3Cpi::new(
+            &ctx.accounts.token_metadata_program.to_account_info(),
+            CreateMasterEditionV3CpiAccounts {
+                edition: &ctx.accounts.collection_master_edition.to_account_info(),
+                mint: &ctx.accounts.collection_mint.to_account_info(),
+                update_authority: &ctx.accounts.authority.to_account_info(),
+                mint_authority: &ctx.accounts.authority.to_account_info(),
+                payer: &ctx.accounts.authority.to_account_info(),
+                metadata: &ctx.accounts.collection_metadata.to_account_info(),
+                token_program: &ctx.accounts.token_program.to_account_info(),
+                system_program: &ctx.accounts.system_program.to_account_info(),
+                rent: Some(&ctx.accounts.rent.to_account_info()),
+            },
+            CreateMasterEditionV3InstructionArgs {
+                max_supply: Some(0),
+            },
+        )
+        .invoke()?;
         
         msg!("NFT Collection initialized with authority: {}", collection.authority);
         Ok(())
     }
 
-    /// Claim an NFT with a valid proof
+    /// Claim an NFT with a valid proof and create Metaplex metadata
     pub fn claim(
         ctx: Context<Claim>,
         proof: [u8; 64],
         nft_id: u32,
         recipient: Pubkey,
+        name: String,
+        uri: String,
     ) -> Result<()> {
-        let collection = &mut ctx.accounts.collection;
-        
         // Check if contract is locked
-        require!(!collection.is_locked, ErrorCode::ContractLocked);
+        require!(!ctx.accounts.collection.is_locked, ErrorCode::ContractLocked);
         
         // Validate NFT ID range
         require!(nft_id < MAX_SUPPLY, ErrorCode::NftIdOutOfRange);
@@ -46,18 +143,111 @@ pub mod fight_tickets_nft {
             &proof,
             recipient,
             nft_id,
-            &collection.signer,
+            &ctx.accounts.collection.signer,
             &ctx.accounts.instruction_sysvar,
         )?;
+        
+        // Store values we need before creating metadata
+        let collection_authority = ctx.accounts.collection.authority;
+        let collection_mint = ctx.accounts.collection.collection_mint;
+        let collection_key = ctx.accounts.collection.key();
         
         // Initialize NFT account
         let nft = &mut ctx.accounts.nft;
         nft.nft_id = nft_id;
         nft.owner = recipient;
-        nft.collection = collection.key();
+        nft.collection = collection_key;
+        nft.mint = ctx.accounts.nft_mint.key();
+        
+        // Create associated token account for NFT
+        let create_ata_accounts = anchor_spl::associated_token::Create {
+            payer: ctx.accounts.payer.to_account_info(),
+            associated_token: ctx.accounts.nft_token_account.to_account_info(),
+            authority: ctx.accounts.recipient_account.to_account_info(),
+            mint: ctx.accounts.nft_mint.to_account_info(),
+            system_program: ctx.accounts.system_program.to_account_info(),
+            token_program: ctx.accounts.token_program.to_account_info(),
+        };
+        let create_ata_ctx = CpiContext::new(
+            ctx.accounts.associated_token_program.to_account_info(),
+            create_ata_accounts,
+        );
+        anchor_spl::associated_token::create(create_ata_ctx)?;
+        
+        // Mint one token to the recipient
+        mint_to(
+            CpiContext::new(
+                ctx.accounts.token_program.to_account_info(),
+                MintTo {
+                    mint: ctx.accounts.nft_mint.to_account_info(),
+                    to: ctx.accounts.nft_token_account.to_account_info(),
+                    authority: ctx.accounts.nft_mint.to_account_info(),
+                },
+            ),
+            1,
+        )?;
+        
+        // Create Metaplex metadata for the NFT
+        let creators = vec![
+            Creator {
+                address: collection_authority,
+                verified: false,
+                share: 100,
+            },
+        ];
+        
+        CreateMetadataAccountV3Cpi::new(
+            &ctx.accounts.token_metadata_program.to_account_info(),
+            CreateMetadataAccountV3CpiAccounts {
+                metadata: &ctx.accounts.nft_metadata.to_account_info(),
+                mint: &ctx.accounts.nft_mint.to_account_info(),
+                mint_authority: &ctx.accounts.nft_mint.to_account_info(),
+                payer: &ctx.accounts.payer.to_account_info(),
+                update_authority: (&ctx.accounts.payer.to_account_info(), true),
+                system_program: &ctx.accounts.system_program.to_account_info(),
+                rent: Some(&ctx.accounts.rent.to_account_info()),
+            },
+            CreateMetadataAccountV3InstructionArgs {
+                data: mpl_token_metadata::types::DataV2 {
+                    name,
+                    symbol: "FIGHT".to_string(),
+                    uri,
+                    seller_fee_basis_points: 0,
+                    creators: Some(creators),
+                    collection: Some(Collection {
+                        verified: false,
+                        key: collection_mint,
+                    }),
+                    uses: None,
+                },
+                is_mutable: false,
+                collection_details: None,
+            },
+        )
+        .invoke()?;
+        
+        // Create master edition
+        CreateMasterEditionV3Cpi::new(
+            &ctx.accounts.token_metadata_program.to_account_info(),
+            CreateMasterEditionV3CpiAccounts {
+                edition: &ctx.accounts.nft_master_edition.to_account_info(),
+                mint: &ctx.accounts.nft_mint.to_account_info(),
+                update_authority: &ctx.accounts.payer.to_account_info(),
+                mint_authority: &ctx.accounts.nft_mint.to_account_info(),
+                payer: &ctx.accounts.payer.to_account_info(),
+                metadata: &ctx.accounts.nft_metadata.to_account_info(),
+                token_program: &ctx.accounts.token_program.to_account_info(),
+                system_program: &ctx.accounts.system_program.to_account_info(),
+                rent: Some(&ctx.accounts.rent.to_account_info()),
+            },
+            CreateMasterEditionV3InstructionArgs {
+                max_supply: Some(0),
+            },
+        )
+        .invoke()?;
         
         // Update collection supply
-        collection.total_supply = collection.total_supply.checked_add(1).unwrap();
+        ctx.accounts.collection.total_supply = ctx.accounts.collection.total_supply.checked_add(1).unwrap();
         
         emit!(ClaimEvent {
             nft_id,
@@ -304,15 +494,16 @@ fn verify_ed25519_signature(
 
 #[account]
 pub struct NftCollection {
-    pub authority: Pubkey,      // Operator address (32)
+    pub authority: Pubkey,       // Operator address (32)
     pub signer: Pubkey,          // API public key for proof verification (32)
     pub is_locked: bool,         // Contract lock status (1)
     pub total_supply: u32,       // Current supply (4)
     pub base_uri: String,        // Base URI for metadata (4 + up to 200 chars)
+    pub collection_mint: Pubkey, // Collection mint address (32)
 }
 
 impl NftCollection {
-    pub const LEN: usize = 8 + 32 + 32 + 1 + 4 + (4 + 200) + 100; // discriminator + data + base_uri + padding
+    pub const LEN: usize = 8 + 32 + 32 + 1 + 4 + (4 + 200) + 32 + 100; // discriminator + data + base_uri + collection_mint + padding
 }
 
 #[account]
@@ -320,10 +511,11 @@ pub struct Nft {
     pub nft_id: u32,             // NFT ID (4)
     pub owner: Pubkey,           // Owner address (32)
     pub collection: Pubkey,      // Collection address (32)
+    pub mint: Pubkey,            // Mint address (32)
 }
 
 impl Nft {
-    pub const LEN: usize = 8 + 4 + 32 + 32 + 50; // discriminator + data + padding
+    pub const LEN: usize = 8 + 4 + 32 + 32 + 32 + 50; // discriminator + data + mint + padding
 }
 
 // Context Structures
@@ -337,14 +529,46 @@ pub struct Initialize<'info> {
     )]
     pub collection: Account<'info, NftCollection>,
     
+    #[account(
+        init,
+        payer = authority,
+        mint::decimals = 0,
+        mint::authority = authority,
+        mint::freeze_authority = authority,
+    )]
+    pub collection_mint: Account<'info, Mint>,
+    
+    /// CHECK: Token account for collection NFT (should be created before calling)
+    #[account(mut)]
+    pub collection_token_account: UncheckedAccount<'info>,
+    
+    /// CHECK: Metaplex will initialize this
+    #[account(mut)]
+    pub collection_metadata: UncheckedAccount<'info>,
+    
+    /// CHECK: Metaplex will initialize this
+    #[account(mut)]
+    pub collection_master_edition: UncheckedAccount<'info>,
+    
     #[account(mut)]
     pub authority: Signer<'info>,
     
     pub system_program: Program<'info, System>,
+    pub token_program: Program<'info, Token>,
+    pub associated_token_program: Program<'info, AssociatedToken>,
+    pub rent: Sysvar<'info, Rent>,
+    
+    /// CHECK: Metaplex Token Metadata Program
+    #[account(address = TOKEN_METADATA_ID)]
+    pub token_metadata_program: UncheckedAccount<'info>,
+    
+    /// CHECK: Sysvar instructions account
+    #[account(address = anchor_lang::solana_program::sysvar::instructions::ID)]
+    pub sysvar_instructions: UncheckedAccount<'info>,
 }
 
 #[derive(Accounts)]
-#[instruction(proof: [u8; 64], nft_id: u32, recipient: Pubkey)]
+#[instruction(proof: [u8; 64], nft_id: u32, recipient: Pubkey, name: String, uri: String)]
 pub struct Claim<'info> {
     #[account(mut)]
     pub collection: Account<'info, NftCollection>,
@@ -362,14 +586,49 @@ pub struct Claim<'info> {
     )]
     pub nft: Account<'info, Nft>,
     
+    #[account(
+        init,
+        payer = payer,
+        mint::decimals = 0,
+        mint::authority = nft_mint,
+        mint::freeze_authority = nft_mint,
+    )]
+    pub nft_mint: Account<'info, Mint>,
+    
+    /// CHECK: Token account for NFT (should be created before calling)
+    #[account(mut)]
+    pub nft_token_account: UncheckedAccount<'info>,
+    
+    /// CHECK: Metaplex will initialize this
+    #[account(mut)]
+    pub nft_metadata: UncheckedAccount<'info>,
+    
+    /// CHECK: Metaplex will initialize this
+    #[account(mut)]
+    pub nft_master_edition: UncheckedAccount<'info>,
+    
+    /// CHECK: Recipient of the NFT
+    pub recipient_account: UncheckedAccount<'info>,
+    
     #[account(mut)]
     pub payer: Signer<'info>,
     
     /// CHECK: This is the sysvar account for instructions
-    #[account(address = SYSVAR_INSTRUCTIONS_ID)]
+    #[account(address = anchor_lang::solana_program::sysvar::instructions::ID)]
     pub instruction_sysvar: AccountInfo<'info>,
     
     pub system_program: Program<'info, System>,
+    pub token_program: Program<'info, Token>,
+    pub associated_token_program: Program<'info, AssociatedToken>,
+    pub rent: Sysvar<'info, Rent>,
+    
+    /// CHECK: Metaplex Token Metadata Program
+    #[account(address = TOKEN_METADATA_ID)]
+    pub token_metadata_program: UncheckedAccount<'info>,
+    
+    /// CHECK: Sysvar instructions account
+    #[account(address = anchor_lang::solana_program::sysvar::instructions::ID)]
+    pub sysvar_instructions: UncheckedAccount<'info>,
 }
 
 #[derive(Accounts)]

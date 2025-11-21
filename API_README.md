@@ -93,12 +93,22 @@ GET /metadata/:id.json
 
 Response: {
   "name": "Fight Ticket #42",
-  "description": "...",
-  "image": "...",
-  "attributes": [...]
+  "symbol": "FIGHT",
+  "description": "VIP access to championship fight",
+  "image": "https://ticketsnft.fight.foundation/images/42.png",
+  "attributes": [
+    {"trait_type": "Event", "value": "Championship Fight"},
+    {"trait_type": "Section", "value": "VIP"}
+  ],
+  "properties": {
+    "category": "image",
+    "files": [
+      {"uri": "https://...", "type": "image/png"}
+    ]
+  }
 }
 ```
-*Returns custom metadata if provided during claim generation, otherwise returns default metadata from environment variables.*
+*Returns custom metadata if provided during claim generation, otherwise returns default metadata from environment variables. Follows Metaplex metadata standard.*
 
 ### Webhook (Alchemy)
 ```
@@ -137,8 +147,48 @@ ngrok http 3000
 - user_id
 - nft_id (unique)
 - wallet_address
-- signature
+- signature (64-byte Ed25519 signature hex)
 - metadata (JSON text, nullable)
 - claimed (boolean)
 - claimed_at
 - created_at
+
+## Integration with Solana Program
+
+1. **Generate Claim**: API creates Ed25519 signature for (recipient + nft_id)
+2. **Submit Transaction**: Frontend calls Solana program with signature
+3. **On-chain Verification**: Program validates signature using stored signer public key
+4. **Mint NFT**: Program creates NFT with Metaplex metadata if signature is valid
+
+### Signature Format
+
+The API signs: `SHA256(recipient_pubkey || nft_id_le_bytes)`
+
+- `recipient_pubkey`: 32 bytes (Solana public key)
+- `nft_id_le_bytes`: 4 bytes (u32 little-endian)
+- Signature: 64 bytes Ed25519 signature
+
+### Environment Variables
+
+```env
+# Contract
+NFT_CONTRACT_ADDRESS=6mfzKkngeptJoiVH7oYdSPSxnNpt3dBs94CMNkfw5oyG
+NFT_COLLECTION_ADDRESS=D71pSR8i46Q2rD38AqCCnAMqiJ6Ypd5Nf2TNh5W8aVoU
+
+# Signing (API server)
+SIGNING_PRIVATE_KEY=<base58-encoded-ed25519-private-key>
+SIGNING_PUBLIC_KEY=HvQLhYwzWFxXWhnRB8F3pfH3V7KYpjy9SzWjxvFwbnft
+
+# Metadata defaults
+DEFAULT_NFT_NAME="Fight Ticket"
+DEFAULT_NFT_DESCRIPTION="Official Fight Foundation Event Ticket"
+DEFAULT_NFT_IMAGE="https://ticketsnft.fight.foundation/images/default.png"
+
+# API
+API_KEY=your-secret-api-key
+PORT=3000
+
+# Database
+DATABASE_URL=postgresql://... # Production
+# SQLite used automatically in development
+```
