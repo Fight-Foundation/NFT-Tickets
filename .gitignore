@@ -46,3 +46,5 @@ Cargo.lock
 .gitsecret/keys/random_seed
 !*.secret
 .env.test
+production-signer.json
+fight_tickets_nft/collection-mainnet-keypair.json
