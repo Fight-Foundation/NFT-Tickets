@@ -112,7 +112,9 @@ curl -X POST http://localhost:3000/api/claim/generate \
   "signature": "a1b2c3d4e5f6...0123456789abcdef",
   "signerPublicKey": "HvQLhYwzWFxXWhnRB8F3pfH3V7KYpjy9SzWjxvFwbnft",
   "claimId": 123,
-  "message": "Claim proof generated successfully"
+  "message": "Claim proof generated successfully",
+  "updated": false,
+  "claimed": false
 }
 ```
 
@@ -123,6 +125,13 @@ curl -X POST http://localhost:3000/api/claim/generate \
 - `signerPublicKey` - Public key of the API signer (base58 encoded)
 - `claimId` - Database ID of this claim record
 - `message` - Success message
+- `updated` - Boolean indicating if this was an update (true) or new claim (false)
+- `claimed` - Boolean indicating if the NFT has been claimed on-chain
+
+**Behavior:**
+- **New NFT:** Creates a new claim with proof and metadata
+- **Unclaimed NFT:** Updates wallet address, signature, and metadata
+- **Claimed NFT:** Only updates metadata (wallet/signature preserved)
 
 **Error Responses:**
 
@@ -188,6 +197,7 @@ curl http://localhost:3000/api/claim/user/HvQLhYwzWFxXWhnRB8F3pfH3V7KYpjy9SzWjxv
     {
       "nftId": 42,
       "signature": "a1b2c3d4e5f6...0123456789abcdef",
+      "signerPublicKey": "HvQLhYwzWFxXWhnRB8F3pfH3V7KYpjy9SzWjxvFwbnft",
       "claimed": false,
       "claimedAt": null,
       "createdAt": "2025-11-20T17:30:45.123Z"
@@ -195,6 +205,7 @@ curl http://localhost:3000/api/claim/user/HvQLhYwzWFxXWhnRB8F3pfH3V7KYpjy9SzWjxv
     {
       "nftId": 100,
       "signature": "fedcba98765...456789abcdef0123",
+      "signerPublicKey": "HvQLhYwzWFxXWhnRB8F3pfH3V7KYpjy9SzWjxvFwbnft",
       "claimed": true,
       "claimedAt": "2025-11-20T18:15:30.456Z",
       "createdAt": "2025-11-20T17:25:10.789Z"
@@ -208,6 +219,7 @@ curl http://localhost:3000/api/claim/user/HvQLhYwzWFxXWhnRB8F3pfH3V7KYpjy9SzWjxv
 - `claims` - Array of claim objects
   - `nftId` - The NFT ID
   - `signature` - The claim proof signature
+  - `signerPublicKey` - Public key of the API signer (base58 encoded)
   - `claimed` - Whether the NFT has been claimed on-chain
   - `claimedAt` - Timestamp when claimed (null if not claimed)
   - `createdAt` - Timestamp when proof was generated

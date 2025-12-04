@@ -128,12 +128,14 @@ claimRouter.get('/user/:walletAddress', async (req, res, next) => {
     }
     
     const claims = await getUserClaims(walletAddress);
+    const signerPublicKey = process.env.SIGNING_PUBLIC_KEY || '';
     
     res.json({
       walletAddress,
       claims: claims.map((claim: any) => ({
         nftId: claim.nft_id,
         signature: claim.signature,
+        signerPublicKey,
         claimed: claim.claimed,
         claimedAt: claim.claimed_at,
         createdAt: claim.created_at
