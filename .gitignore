@@ -48,3 +48,4 @@ Cargo.lock
 .env.test
 production-signer.json
 fight_tickets_nft/collection-mainnet-keypair.json
+anchor.json
